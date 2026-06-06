@@ -12,6 +12,7 @@ DEFAULT_INFLUX_BUCKET = "Whitelist"
 DEFAULT_INFLUX_WHITELIST_MEASUREMENT = "whitelist"
 DEFAULT_INFLUX_WHITELIST_FIELD = "plate"
 DEFAULT_WHITELIST_CACHE_TTL_SECONDS = 300
+DEFAULT_AWS_REGION = "us-east-1"
 
 
 def env_str(key: str, default: str) -> str:

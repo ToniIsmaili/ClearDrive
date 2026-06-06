@@ -1,6 +1,12 @@
 import cv2
 
-from cleardrive.modules import PlateDetectionModule, PlateOCRModule, WebcamModule, WhiteListModule
+from cleardrive.modules import (
+    EventModule,
+    PlateDetectionModule,
+    PlateOCRModule,
+    WebcamModule,
+    WhiteListModule,
+)
 
 
 def main() -> None:
@@ -12,6 +18,7 @@ def main() -> None:
         PlateDetectionModule() as detector,
         PlateOCRModule() as ocr,
         WhiteListModule() as whitelist,
+        EventModule() as events,
     ):
         print("Ready. Press 'q' in the preview window to quit.", flush=True)
 
@@ -28,21 +35,36 @@ def main() -> None:
                 method = plate.metadata.get("method", "yolo")
                 ocr_result = ocr.process(plate)
                 whitelist_result = whitelist.process(ocr_result) if ocr_result is not None else None
+                event_result = (
+                    events.process(whitelist_result) if whitelist_result is not None else None
+                )
 
                 plate_text = (
-                    whitelist_result.metadata["plate"]
-                    if whitelist_result is not None
+                    event_result.metadata["plate"]
+                    if event_result is not None
                     else None
                 )
                 is_whitelisted = (
-                    whitelist_result.metadata["whitelisted"]
-                    if whitelist_result is not None
+                    event_result.metadata["whitelisted"]
+                    if event_result is not None
                     else False
                 )
 
                 if plate_text is not None and plate_text != last_plate_text:
                     status = "whitelisted" if is_whitelisted else "not whitelisted"
                     print(f"Plate: {plate_text} ({status})", flush=True)
+                    if event_result is not None:
+                        if event_result.metadata.get("event_published"):
+                            print(
+                                f"  SNS event published (message id: "
+                                f"{event_result.metadata['sns_message_id']})",
+                                flush=True,
+                            )
+                        elif event_result.metadata.get("event_error"):
+                            print(
+                                f"  SNS publish failed: {event_result.metadata['event_error']}",
+                                flush=True,
+                            )
                     last_plate_text = plate_text
 
                 if plate_text is not None:
