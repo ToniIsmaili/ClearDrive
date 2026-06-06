@@ -4,17 +4,17 @@ from datetime import datetime, timezone
 from cleardrive.core.config import (
     DEFAULT_PLATE_FORMAT,
     DEFAULT_PLATE_PREFIX_VALUES,
-    DEFAULT_WHITELIST_PLATES,
     env_csv_list,
     env_str,
 )
 from cleardrive.core.module import Module
 from cleardrive.core.types import ImageFrame
 from cleardrive.modules.recognition.plate_ocr import format_to_pattern, pattern_to_regex
+from cleardrive.modules.whitelist.influx_cache import InfluxWhitelistCache
 
 
 class WhiteListModule(Module):
-    """Checks whether a license plate text is on the configured whitelist."""
+    """Checks whether a license plate text is on the InfluxDB whitelist."""
 
     name = "whitelist"
 
@@ -22,7 +22,7 @@ class WhiteListModule(Module):
         self,
         plate_format: str | None = None,
         prefix_values: list[str] | None = None,
-        whitelist_plates: list[str] | None = None,
+        influx_cache: InfluxWhitelistCache | None = None,
     ) -> None:
         self.plate_format = plate_format or env_str("OCR_PLATE_FORMAT", DEFAULT_PLATE_FORMAT)
         self.prefix_values = prefix_values or env_csv_list(
@@ -30,13 +30,13 @@ class WhiteListModule(Module):
         )
         compact_pattern = self.plate_format.replace(" ", "")
         self._format_regex = pattern_to_regex(compact_pattern, self.prefix_values)
-        self._whitelist = self._build_whitelist(whitelist_plates)
+        self._influx_cache = influx_cache or InfluxWhitelistCache()
 
     def setup(self) -> None:
-        pass
+        self._influx_cache.setup()
 
     def teardown(self) -> None:
-        pass
+        self._influx_cache.teardown()
 
     def process(self, frame: ImageFrame | None = None) -> ImageFrame | None:
         """Check plate text from *frame* metadata and attach whitelist results."""
@@ -67,18 +67,7 @@ class WhiteListModule(Module):
         if plate is None:
             return False, None
 
-        return plate in self._whitelist, plate
-
-    def _build_whitelist(self, whitelist_plates: list[str] | None) -> set[str]:
-        raw_plates = whitelist_plates or env_csv_list("WHITELIST_PLATES", DEFAULT_WHITELIST_PLATES)
-        whitelist: set[str] = set()
-
-        for entry in raw_plates:
-            plate = self._normalize_plate(entry)
-            if plate is not None:
-                whitelist.add(plate)
-
-        return whitelist
+        return plate in self._influx_cache.get_plates(self._normalize_plate), plate
 
     def _normalize_plate(self, text: str) -> str | None:
         compact = re.sub(r"[^A-Z0-9]", "", text.upper())
