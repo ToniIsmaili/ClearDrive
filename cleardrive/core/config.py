@@ -8,6 +8,7 @@ load_dotenv(_PROJECT_ROOT / ".env")
 
 DEFAULT_PLATE_FORMAT = "FF 0000 XX"
 DEFAULT_PLATE_PREFIX_VALUES = "SK,KU,ST,TE,VE"
+DEFAULT_WHITELIST_PLATES = ""
 
 
 def env_str(key: str, default: str) -> str:
