@@ -1,5 +1,6 @@
 import re
 from datetime import datetime, timezone
+from collections import deque
 from itertools import combinations
 
 import cv2
@@ -196,6 +197,183 @@ def extract_plate_compact(
     return best[1] if best is not None else None
 
 
+# Common Tesseract confusions on low-resolution plate crops.
+OCR_SUBSTITUTIONS: dict[str, str] = {
+    "O": "08",
+    "0": "O8",
+    "Q": "O0",
+    "D": "0",
+    "Z": "24",
+    "2": "Z",
+    "S": "5",
+    "5": "S",
+    "B": "8",
+    "8": "B6",
+    "G": "6",
+    "6": "G8",
+    "I": "1",
+    "1": "I",
+    "L": "1",
+    "T": "7",
+    "7": "T",
+    "X": "KS",
+    "K": "X",
+}
+
+
+def _ocr_substitution_variants(char: str) -> set[str]:
+    variants = {char}
+    for alt in OCR_SUBSTITUTIONS.get(char, ""):
+        variants.add(alt)
+    return variants
+
+
+def _validate_compact(
+    candidate: str,
+    *,
+    format_regex: re.Pattern[str],
+    plate_format: str,
+    prefix_values: list[str],
+) -> bool:
+    return (
+        format_regex.fullmatch(candidate) is not None
+        and format_to_pattern(candidate, plate_format, prefix_values) is not None
+    )
+
+
+def _prefixes_matching_second_letter(compact: str, prefix_values: list[str]) -> list[str]:
+    """Return prefixes whose second letter matches the first character of *compact*."""
+    if not compact or not compact[0].isalpha():
+        return []
+
+    return [prefix for prefix in prefix_values if len(prefix) >= 2 and compact[0] == prefix[1]]
+
+
+def _prefix_completion_candidates(
+    compact: str,
+    prefix_values: list[str],
+    expected_len: int,
+) -> set[str]:
+    """Rebuild plates missing exactly one known prefix letter when OCR still hints at it."""
+    candidates: set[str] = set()
+    missing = expected_len - len(compact)
+
+    if missing != 1:
+        return candidates
+
+    matching = _prefixes_matching_second_letter(compact, prefix_values)
+    if len(matching) != 1:
+        return candidates
+
+    prefix = matching[0]
+    candidates.add(prefix[0] + compact)
+    return candidates
+
+
+def _repair_neighbors(
+    compact: str,
+    prefix_values: list[str],
+    expected_len: int,
+) -> set[str]:
+    """Apply one OCR repair step to *compact*."""
+    neighbors: set[str] = set()
+
+    for index in range(len(compact)):
+        neighbors.add(compact[:index] + compact[index + 1 :])
+
+        for alt in _ocr_substitution_variants(compact[index]):
+            if alt != compact[index]:
+                neighbors.add(compact[:index] + alt + compact[index + 1 :])
+
+    neighbors.update(_prefix_completion_candidates(compact, prefix_values, expected_len))
+
+    return {value for value in neighbors if value}
+
+
+def repair_plate_compact(
+    compact: str,
+    *,
+    expected_len: int,
+    format_regex: re.Pattern[str],
+    plate_format: str,
+    prefix_values: list[str],
+    max_extra_chars: int = 4,
+    max_repairs: int = 3,
+    segment_starts: set[int] | None = None,
+) -> str | None:
+    """Recover a valid plate from missing or misread OCR characters."""
+
+    def validate(candidate: str) -> bool:
+        return _validate_compact(
+            candidate,
+            format_regex=format_regex,
+            plate_format=plate_format,
+            prefix_values=prefix_values,
+        )
+
+    extracted = extract_plate_compact(
+        compact,
+        expected_len=expected_len,
+        format_regex=format_regex,
+        plate_format=plate_format,
+        prefix_values=prefix_values,
+        max_extra_chars=max_extra_chars,
+        segment_starts=segment_starts,
+    )
+    if extracted is not None:
+        return extracted
+
+    min_len = expected_len - max_repairs
+    max_len = expected_len + max_extra_chars
+    if len(compact) < min_len or len(compact) > max_len:
+        return None
+
+    if validate(compact):
+        return compact
+
+    best: str | None = None
+    best_cost: tuple[int, int] | None = None
+    seen: set[str] = {compact}
+    queue: deque[tuple[str, int]] = deque([(compact, 0)])
+
+    while queue:
+        current, repairs = queue.popleft()
+
+        if validate(current):
+            cost = (repairs, abs(len(current) - expected_len))
+            if best_cost is None or cost < best_cost:
+                best = current
+                best_cost = cost
+            continue
+
+        if repairs >= max_repairs:
+            continue
+
+        for neighbor in _repair_neighbors(current, prefix_values, expected_len):
+            if neighbor in seen:
+                continue
+            if len(neighbor) < min_len or len(neighbor) > max_len:
+                continue
+            seen.add(neighbor)
+            queue.append((neighbor, repairs + 1))
+
+        if len(current) > expected_len:
+            nested = extract_plate_compact(
+                current,
+                expected_len=expected_len,
+                format_regex=format_regex,
+                plate_format=plate_format,
+                prefix_values=prefix_values,
+                max_extra_chars=max_extra_chars,
+                segment_starts=segment_starts,
+            )
+            if nested is not None and nested not in seen:
+                seen.add(nested)
+                queue.append((nested, repairs + 1))
+
+    return best
+
+
 class PlateOCRModule(Module):
     """Reads license plate text from a cropped plate image using OCR on black characters."""
 
@@ -283,7 +461,7 @@ class PlateOCRModule(Module):
             self._log(f"raw {raw_text!r} -> no alphanumerics")
             return None
 
-        matched = extract_plate_compact(
+        matched = repair_plate_compact(
             compact,
             expected_len=self._expected_compact_length,
             format_regex=self._format_regex,
@@ -309,7 +487,7 @@ class PlateOCRModule(Module):
         if matched == compact:
             self._log(f"raw {raw_text!r} -> {formatted}")
         else:
-            self._log(f"raw {raw_text!r} -> {formatted} (extracted from {compact!r})")
+            self._log(f"raw {raw_text!r} -> {formatted} (repaired from {compact!r})")
         return formatted
 
     def _log(self, message: str) -> None:
