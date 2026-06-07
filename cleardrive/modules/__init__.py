@@ -1,3 +1,4 @@
+from cleardrive.modules.actuator.servo import ServoModule
 from cleardrive.modules.camera.webcam import WebcamModule
 from cleardrive.modules.detection.plate import PlateDetectionModule
 from cleardrive.modules.event.event import EventModule
@@ -8,6 +9,7 @@ __all__ = [
     "EventModule",
     "PlateDetectionModule",
     "PlateOCRModule",
+    "ServoModule",
     "WebcamModule",
     "WhiteListModule",
 ]

@@ -4,6 +4,7 @@ from cleardrive.modules import (
     EventModule,
     PlateDetectionModule,
     PlateOCRModule,
+    ServoModule,
     WebcamModule,
     WhiteListModule,
 )
@@ -18,6 +19,7 @@ def main() -> None:
         PlateDetectionModule() as detector,
         PlateOCRModule() as ocr,
         WhiteListModule() as whitelist,
+        ServoModule() as servo,
         EventModule() as events,
     ):
         print("Ready. Press 'q' in the preview window to quit.", flush=True)
@@ -35,9 +37,10 @@ def main() -> None:
                 method = plate.metadata.get("method", "yolo")
                 ocr_result = ocr.process(plate)
                 whitelist_result = whitelist.process(ocr_result) if ocr_result is not None else None
-                event_result = (
-                    events.process(whitelist_result) if whitelist_result is not None else None
+                servo_result = (
+                    servo.process(whitelist_result) if whitelist_result is not None else None
                 )
+                event_result = events.process(servo_result) if servo_result is not None else None
 
                 plate_text = (
                     event_result.metadata["plate"]
@@ -54,6 +57,14 @@ def main() -> None:
                     status = "whitelisted" if is_whitelisted else "not whitelisted"
                     print(f"Plate: {plate_text} ({status})", flush=True)
                     if event_result is not None:
+                        if event_result.metadata.get("servo_opened"):
+                            delay = event_result.metadata["servo_close_delay_seconds"]
+                            print(f"  Ramp opened (closes in {delay}s)", flush=True)
+                        elif event_result.metadata.get("servo_error"):
+                            print(
+                                f"  Servo failed: {event_result.metadata['servo_error']}",
+                                flush=True,
+                            )
                         if event_result.metadata.get("event_published"):
                             print(
                                 f"  SNS event published (message id: "

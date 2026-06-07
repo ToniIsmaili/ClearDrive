@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -13,6 +14,13 @@ DEFAULT_INFLUX_WHITELIST_MEASUREMENT = "whitelist"
 DEFAULT_INFLUX_WHITELIST_FIELD = "plate"
 DEFAULT_WHITELIST_CACHE_TTL_SECONDS = 300
 DEFAULT_AWS_REGION = "us-east-1"
+DEFAULT_SERVO_GPIO_PIN = 18
+DEFAULT_SERVO_OPEN_ANGLE = 90
+DEFAULT_SERVO_CLOSE_ANGLE = 0
+DEFAULT_SERVO_CLOSE_DELAY_SECONDS = 5
+DEFAULT_SERVO_MIN_PULSE_WIDTH = 0.0005
+DEFAULT_SERVO_MAX_PULSE_WIDTH = 0.0025
+DEFAULT_SERVO_ENABLED = sys.platform == "linux"
 
 
 def env_str(key: str, default: str) -> str:
@@ -36,3 +44,10 @@ def env_optional_str(key: str) -> str | None:
 def env_csv_list(key: str, default: str) -> list[str]:
     value = os.getenv(key, default)
     return [item.strip().upper() for item in value.split(",") if item.strip()]
+
+
+def env_bool(key: str, default: bool) -> bool:
+    value = os.getenv(key)
+    if value is None:
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
