@@ -84,7 +84,9 @@ def main() -> None:
                     color,
                     2,
                 )
-                cv2.imshow("ClearDrive - Plate", plate.data)
+                ocr_view = ocr.preprocess(plate.data)
+                if ocr_view is not None:
+                    cv2.imshow("ClearDrive - Plate", ocr_view)
             else:
                 last_plate_text = None
 

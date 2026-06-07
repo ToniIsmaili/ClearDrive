@@ -165,13 +165,19 @@ class PlateOCRModule(Module):
             },
         )
 
-    def recognize(self, image: np.ndarray) -> str | None:
-        """Recognize and validate plate text from a BGR image. Returns None if OCR fails validation."""
+    def preprocess(self, image: np.ndarray) -> np.ndarray | None:
+        """Return the binary image fed to the OCR engine, or None for empty input."""
         if image is None or image.size == 0:
             return None
 
         binary = self._isolate_black_characters(image)
-        scaled = self._scale_for_ocr(binary)
+        return self._scale_for_ocr(binary)
+
+    def recognize(self, image: np.ndarray) -> str | None:
+        """Recognize and validate plate text from a BGR image. Returns None if OCR fails validation."""
+        scaled = self.preprocess(image)
+        if scaled is None:
+            return None
         raw_text = self._run_ocr(scaled)
         if not raw_text:
             return None
