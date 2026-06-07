@@ -136,6 +136,7 @@ class PlateOCRModule(Module):
         )
         compact_pattern = self.plate_format.replace(" ", "")
         self._format_regex = pattern_to_regex(compact_pattern, self.prefix_values)
+        self._last_log_message: str | None = None
 
     def setup(self) -> None:
         if self.tesseract_cmd is not None:
@@ -177,12 +178,42 @@ class PlateOCRModule(Module):
         """Recognize and validate plate text from a BGR image. Returns None if OCR fails validation."""
         scaled = self.preprocess(image)
         if scaled is None:
-            return None
-        raw_text = self._run_ocr(scaled)
-        if not raw_text:
+            self._log("empty or unusable plate crop")
             return None
 
-        return self._validate_text(raw_text)
+        raw_text = self._run_ocr(scaled)
+        if not raw_text:
+            self._log("tesseract returned nothing")
+            return None
+
+        compact = re.sub(r"[^A-Z0-9]", "", raw_text.upper())
+        if not compact:
+            self._log(f"raw {raw_text!r} -> no alphanumerics")
+            return None
+
+        if not self._format_regex.fullmatch(compact):
+            self._log(
+                f"raw {raw_text!r} -> compact {compact!r} "
+                f"does not match {self.plate_format}"
+            )
+            return None
+
+        formatted = format_to_pattern(compact, self.plate_format, self.prefix_values)
+        if formatted is None:
+            self._log(
+                f"raw {raw_text!r} -> compact {compact!r} "
+                f"failed prefix check for {self.plate_format}"
+            )
+            return None
+
+        self._log(f"raw {raw_text!r} -> {formatted}")
+        return formatted
+
+    def _log(self, message: str) -> None:
+        if message == self._last_log_message:
+            return
+        self._last_log_message = message
+        print(f"[OCR] {message}", flush=True)
 
     def _isolate_black_characters(self, image: np.ndarray) -> np.ndarray:
         """Separate black/gray ink from the plate background; ignore colored artwork."""
@@ -228,16 +259,6 @@ class PlateOCRModule(Module):
         )
         text = pytesseract.image_to_string(binary, config=config)
         return text.strip()
-
-    def _validate_text(self, raw_text: str) -> str | None:
-        compact = re.sub(r"[^A-Z0-9]", "", raw_text.upper())
-        if not compact:
-            return None
-
-        if not self._format_regex.fullmatch(compact):
-            return None
-
-        return format_to_pattern(compact, self.plate_format, self.prefix_values)
 
     def __enter__(self) -> "PlateOCRModule":
         self.setup()
