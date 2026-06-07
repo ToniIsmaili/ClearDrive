@@ -125,8 +125,8 @@ class PlateOCRModule(Module):
         self.prefix_values = prefix_values or env_csv_list(
             "OCR_PLATE_PREFIX_VALUES", DEFAULT_PLATE_PREFIX_VALUES
         )
-        self.black_v_max = black_v_max if black_v_max is not None else env_int("OCR_BLACK_V_MAX", 80)
-        self.black_s_max = black_s_max if black_s_max is not None else env_int("OCR_BLACK_S_MAX", 100)
+        self.black_v_max = black_v_max if black_v_max is not None else env_int("OCR_BLACK_V_MAX", 110)
+        self.black_s_max = black_s_max if black_s_max is not None else env_int("OCR_BLACK_S_MAX", 35)
         self.min_plate_height = (
             min_plate_height if min_plate_height is not None else env_int("OCR_MIN_PLATE_HEIGHT", 50)
         )
@@ -185,20 +185,32 @@ class PlateOCRModule(Module):
         return self._validate_text(raw_text)
 
     def _isolate_black_characters(self, image: np.ndarray) -> np.ndarray:
-        """Keep only dark, low-saturation pixels so colored plate text is ignored."""
+        """Separate black/gray ink from the plate background; ignore colored artwork."""
         if image.ndim == 2:
-            gray = image
-        else:
-            hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-            lower = np.array([0, 0, 0], dtype=np.uint8)
-            upper = np.array([180, self.black_s_max, self.black_v_max], dtype=np.uint8)
-            mask = cv2.inRange(hsv, lower, upper)
-            gray = np.full(image.shape[:2], 255, dtype=np.uint8)
-            gray[mask > 0] = 0
-            return gray
+            _, binary = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            return binary
 
-        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        return binary
+        lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+        lightness, a_channel, b_channel = cv2.split(lab)
+        a_dev = np.abs(a_channel.astype(np.int16) - 128)
+        b_dev = np.abs(b_channel.astype(np.int16) - 128)
+        chroma = np.maximum(a_dev, b_dev)
+        achromatic = chroma <= self.black_s_max
+
+        # Split ink from background on neutral pixels only; colored regions stay white.
+        work = np.where(achromatic, lightness, 255).astype(np.uint8)
+        _, binary = cv2.threshold(work, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        binary = np.where(achromatic, binary, 255).astype(np.uint8)
+
+        if np.count_nonzero(binary == 0) > binary.size * 0.45:
+            binary = cv2.bitwise_not(binary)
+            binary = np.where(achromatic, binary, 255).astype(np.uint8)
+
+        # Drop anything too bright to be black ink (plate surface, shadows, anti-alias halos).
+        binary[(lightness > self.black_v_max) & (binary == 0)] = 255
+
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+        return cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=1)
 
     def _scale_for_ocr(self, binary: np.ndarray) -> np.ndarray:
         height = binary.shape[0]

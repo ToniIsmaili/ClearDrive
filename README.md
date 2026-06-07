@@ -244,8 +244,8 @@ All settings are loaded from `.env` in the project root. See `.env.example` for 
 |----------|---------|-------------|
 | `OCR_PLATE_FORMAT` | `FF 0000 XX` | Expected plate layout. `F` = prefix, `0` = digit, `X` = letter |
 | `OCR_PLATE_PREFIX_VALUES` | `SK,KU,ST,TE,VE` | Allowed values for `F` segments |
-| `OCR_BLACK_V_MAX` | `80` | HSV value threshold for black character isolation |
-| `OCR_BLACK_S_MAX` | `100` | HSV saturation threshold for black character isolation |
+| `OCR_BLACK_V_MAX` | `110` | Max LAB lightness kept as black ink after separation |
+| `OCR_BLACK_S_MAX` | `35` | Max color deviation from neutral gray; lower excludes more colored plate art |
 | `OCR_MIN_PLATE_HEIGHT` | `50` | Minimum crop height before OCR upscaling |
 | `OCR_TESSERACT_PSM` | `7` | Tesseract page segmentation mode (single text line) |
 | `TESSERACT_CMD` | *(none)* | Path to `tesseract.exe` on Windows if not on `PATH` |
@@ -414,7 +414,7 @@ WebcamModule(device_id=1)
 ### Plate detected but text is wrong
 
 - Improve lighting and angle toward the plate.
-- Adjust `OCR_BLACK_V_MAX` / `OCR_BLACK_S_MAX` if plate characters are not black.
+- Raise `OCR_BLACK_V_MAX` if black characters are faint in the **ClearDrive - Plate** preview; lower `OCR_BLACK_S_MAX` if colored plate artwork is still being picked up.
 - Confirm `OCR_PLATE_FORMAT` and `OCR_PLATE_PREFIX_VALUES` match your country's plate format.
 
 ### Plate text correct but not whitelisted
