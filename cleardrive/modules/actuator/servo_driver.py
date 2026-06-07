@@ -15,6 +15,16 @@ from cleardrive.core.config import (
 logger = logging.getLogger(__name__)
 
 
+def _configure_lgpio_pin_factory(device: Any) -> None:
+    """Use hardware GPIO on Raspberry Pi instead of software PWM."""
+    try:
+        from gpiozero.pins.lgpio import LGPIOFactory
+
+        device.pin_factory = LGPIOFactory()
+    except ImportError:
+        pass
+
+
 class ServoDriver:
     """Controls an SG90-style hobby servo for ramp open/close positions."""
 
@@ -55,7 +65,9 @@ class ServoDriver:
         if self._servo is not None:
             return
 
-        from gpiozero import AngularServo
+        from gpiozero import AngularServo, Device
+
+        _configure_lgpio_pin_factory(Device)
 
         self._servo = AngularServo(
             self.pin,

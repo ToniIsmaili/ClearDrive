@@ -1,3 +1,8 @@
+import argparse
+import os
+import signal
+import time
+
 import cv2
 
 from cleardrive.modules import (
@@ -10,9 +15,43 @@ from cleardrive.modules import (
 )
 
 
+def _resolve_headless(cli_headless: bool | None) -> bool:
+    """Return True when preview windows should be skipped."""
+    if cli_headless is not None:
+        return cli_headless
+
+    env = os.getenv("CLEARDRIVE_HEADLESS", "").strip().lower()
+    if env in ("1", "true", "yes", "on"):
+        return True
+    if env in ("0", "false", "no", "off"):
+        return False
+
+    display = os.getenv("DISPLAY", "").strip()
+    return display == ""
+
+
 def main() -> None:
-    """Demo: capture webcam frames, detect plates, and display results until you press 'q'."""
+    """Capture webcam frames, detect plates, and optionally show a live preview."""
+    parser = argparse.ArgumentParser(description="ClearDrive license plate pipeline")
+    parser.add_argument(
+        "--headless",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Skip OpenCV preview windows (default: on when DISPLAY is unset)",
+    )
+    args = parser.parse_args()
+    headless = _resolve_headless(args.headless)
+
     print("Opening webcam and loading plate detector...", flush=True)
+
+    stop = False
+
+    def _request_stop(*_: object) -> None:
+        nonlocal stop
+        stop = True
+
+    signal.signal(signal.SIGINT, _request_stop)
+    signal.signal(signal.SIGTERM, _request_stop)
 
     with (
         WebcamModule(device_id=0) as camera,
@@ -22,15 +61,17 @@ def main() -> None:
         ServoModule() as servo,
         EventModule() as events,
     ):
-        print("Ready. Press 'q' in the preview window to quit.", flush=True)
+        if headless:
+            print("Running headless. Press Ctrl+C to quit.", flush=True)
+        else:
+            print("Ready. Press 'q' in the preview window to quit.", flush=True)
 
         last_plate_text: str | None = None
 
-        while True:
+        while not stop:
             frame = camera.process()
             plate = detector.process(frame)
 
-            display = frame.data.copy()
             if plate is not None:
                 x, y, w, h = plate.metadata["bbox"]
                 confidence = plate.metadata["confidence"]
@@ -78,34 +119,43 @@ def main() -> None:
                             )
                     last_plate_text = plate_text
 
-                if plate_text is not None:
-                    label = f"{plate_text} ({'OK' if is_whitelisted else 'DENIED'})"
-                    color = (0, 255, 0) if is_whitelisted else (0, 0, 255)
-                else:
-                    label = f"{confidence:.0%} ({method})"
-                    color = (0, 200, 255)
+                if not headless:
+                    if plate_text is not None:
+                        label = f"{plate_text} ({'OK' if is_whitelisted else 'DENIED'})"
+                        color = (0, 255, 0) if is_whitelisted else (0, 0, 255)
+                    else:
+                        label = f"{confidence:.0%} ({method})"
+                        color = (0, 200, 255)
 
-                cv2.rectangle(display, (x, y), (x + w, y + h), color, 2)
-                cv2.putText(
-                    display,
-                    label,
-                    (x, y - 8),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    color,
-                    2,
-                )
-                ocr_view = ocr.preprocess(plate.data)
-                if ocr_view is not None:
-                    cv2.imshow("ClearDrive - Plate", ocr_view)
+                    display = frame.data.copy()
+                    cv2.rectangle(display, (x, y), (x + w, y + h), color, 2)
+                    cv2.putText(
+                        display,
+                        label,
+                        (x, y - 8),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        color,
+                        2,
+                    )
+                    ocr_view = ocr.preprocess(plate.data)
+                    if ocr_view is not None:
+                        cv2.imshow("ClearDrive - Plate", ocr_view)
+                    cv2.imshow("ClearDrive - Webcam", display)
+                    if cv2.waitKey(1) & 0xFF == ord("q"):
+                        break
             else:
                 last_plate_text = None
+                if not headless:
+                    cv2.imshow("ClearDrive - Webcam", frame.data)
+                    if cv2.waitKey(1) & 0xFF == ord("q"):
+                        break
 
-            cv2.imshow("ClearDrive - Webcam", display)
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                break
+            if headless:
+                time.sleep(0.01)
 
-    cv2.destroyAllWindows()
+    if not headless:
+        cv2.destroyAllWindows()
     print("Done.", flush=True)
 
 
