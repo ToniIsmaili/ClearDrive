@@ -20,7 +20,11 @@ DEFAULT_SERVO_CLOSE_ANGLE = 0
 DEFAULT_SERVO_CLOSE_DELAY_SECONDS = 5
 DEFAULT_SERVO_MIN_PULSE_WIDTH = 0.0005
 DEFAULT_SERVO_MAX_PULSE_WIDTH = 0.0025
+DEFAULT_SERVO_SETTLE_SECONDS = 0.4
+DEFAULT_SERVO_DETACH_AFTER_MOVE = True
 DEFAULT_SERVO_ENABLED = sys.platform == "linux"
+# Headless mode runs YOLO every loop; ~4 FPS keeps Pi CPU/power use stable.
+DEFAULT_HEADLESS_FRAME_INTERVAL_SECONDS = 0.25
 
 
 def env_str(key: str, default: str) -> str:
@@ -51,3 +55,10 @@ def env_bool(key: str, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+def env_float(key: str, default: float) -> float:
+    value = os.getenv(key)
+    if value is None:
+        return default
+    return float(value)

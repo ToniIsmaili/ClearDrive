@@ -5,6 +5,10 @@ import time
 
 import cv2
 
+from cleardrive.core.config import (
+    DEFAULT_HEADLESS_FRAME_INTERVAL_SECONDS,
+    env_float,
+)
 from cleardrive.modules import (
     EventModule,
     PlateDetectionModule,
@@ -41,6 +45,10 @@ def main() -> None:
     )
     args = parser.parse_args()
     headless = _resolve_headless(args.headless)
+    frame_interval = env_float(
+        "CLEARDRIVE_FRAME_INTERVAL_SECONDS",
+        DEFAULT_HEADLESS_FRAME_INTERVAL_SECONDS if headless else 0.0,
+    )
 
     print("Opening webcam and loading plate detector...", flush=True)
 
@@ -63,6 +71,13 @@ def main() -> None:
     ):
         if headless:
             print("Running headless. Press Ctrl+C to quit.", flush=True)
+            if frame_interval > 0:
+                fps = 1.0 / frame_interval
+                print(
+                    f"Processing ~{fps:.1f} frame(s)/s "
+                    f"(CLEARDRIVE_FRAME_INTERVAL_SECONDS={frame_interval}).",
+                    flush=True,
+                )
         else:
             print("Ready. Press 'q' in the preview window to quit.", flush=True)
 
@@ -151,8 +166,8 @@ def main() -> None:
                     if cv2.waitKey(1) & 0xFF == ord("q"):
                         break
 
-            if headless:
-                time.sleep(0.01)
+            if frame_interval > 0:
+                time.sleep(frame_interval)
 
     if not headless:
         cv2.destroyAllWindows()
