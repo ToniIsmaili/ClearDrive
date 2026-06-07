@@ -23,7 +23,8 @@ DEFAULT_SERVO_MAX_PULSE_WIDTH = 0.0025
 DEFAULT_SERVO_SETTLE_SECONDS = 0.4
 DEFAULT_SERVO_DETACH_AFTER_MOVE = True
 DEFAULT_SERVO_ENABLED = sys.platform == "linux"
-# Headless mode runs YOLO every loop; ~4 FPS keeps Pi CPU/power use stable.
+DEFAULT_ENABLE_YOLO = False
+# Headless mode frame pacing; ~4 FPS keeps Pi CPU/power use stable.
 DEFAULT_HEADLESS_FRAME_INTERVAL_SECONDS = 0.25
 
 

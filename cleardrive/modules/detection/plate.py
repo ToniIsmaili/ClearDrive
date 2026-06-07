@@ -1,13 +1,17 @@
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.request import urlretrieve
 
 import cv2
 import numpy as np
-from ultralytics import YOLO
 
+from cleardrive.core.config import DEFAULT_ENABLE_YOLO, env_bool
 from cleardrive.core.module import Module
 from cleardrive.core.types import ImageFrame
+
+if TYPE_CHECKING:
+    from ultralytics import YOLO
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 _DEFAULT_MODEL_PATH = _PROJECT_ROOT / "models" / "yolov8_license_plate.pt"
@@ -37,6 +41,7 @@ class PlateDetectionModule(Module):
         device: str | None = None,
         auto_download: bool = True,
         imgsz: int = 640,
+        use_yolo: bool | None = None,
         use_contour_fallback: bool = True,
     ) -> None:
         self.model_path = Path(model_path) if model_path else _default_model_path()
@@ -44,11 +49,16 @@ class PlateDetectionModule(Module):
         self.device = device
         self.auto_download = auto_download
         self.imgsz = imgsz
+        self.use_yolo = (
+            use_yolo
+            if use_yolo is not None
+            else env_bool("CLEARDRIVE_ENABLE_YOLO", DEFAULT_ENABLE_YOLO)
+        )
         self.use_contour_fallback = use_contour_fallback
         self._model: YOLO | None = None
 
     def setup(self) -> None:
-        if self._model is not None:
+        if not self.use_yolo or self._model is not None:
             return
 
         if not self.model_path.exists():
@@ -59,6 +69,8 @@ class PlateDetectionModule(Module):
                     f"YOLOv8 model not found at {self.model_path}. "
                     "Provide a trained license-plate weights file via model_path=."
                 )
+
+        from ultralytics import YOLO
 
         self._model = YOLO(str(self.model_path))
 
@@ -101,10 +113,11 @@ class PlateDetectionModule(Module):
     def _detect_plate(
         self, image: np.ndarray
     ) -> tuple[int, int, int, int, float, str] | None:
-        for variant in (image, self._enhance_for_detection(image)):
-            detection = self._detect_with_yolo(variant)
-            if detection is not None:
-                return (*detection, "yolo")
+        if self.use_yolo:
+            for variant in (image, self._enhance_for_detection(image)):
+                detection = self._detect_with_yolo(variant)
+                if detection is not None:
+                    return (*detection, "yolo")
 
         if self.use_contour_fallback:
             detection = self._detect_with_contours(image)
