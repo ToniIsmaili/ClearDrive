@@ -1,5 +1,6 @@
 import re
 from datetime import datetime, timezone
+from itertools import combinations
 
 import cv2
 import numpy as np
@@ -106,6 +107,95 @@ def format_to_pattern(text: str, pattern: str, prefix_values: list[str]) -> str 
     return "".join(result)
 
 
+def pattern_compact_length(pattern: str) -> int:
+    """Return the number of alphanumeric characters in a plate format pattern."""
+    length = 0
+    for segment in parse_pattern_segments(pattern):
+        if isinstance(segment, str):
+            continue
+        _, segment_length = segment
+        length += segment_length
+    return length
+
+
+def pattern_segment_starts(pattern: str) -> set[int]:
+    """Return compact-string indices where a new pattern segment begins."""
+    starts = {0}
+    index = 0
+
+    for segment in parse_pattern_segments(pattern):
+        if isinstance(segment, str):
+            continue
+
+        _, segment_length = segment
+        index += segment_length
+
+        if index < pattern_compact_length(pattern):
+            starts.add(index)
+
+    return starts
+
+
+def extract_plate_compact(
+    compact: str,
+    *,
+    expected_len: int,
+    format_regex: re.Pattern[str],
+    plate_format: str,
+    prefix_values: list[str],
+    max_extra_chars: int = 4,
+    segment_starts: set[int] | None = None,
+) -> str | None:
+    """Pull a valid compact plate out of noisy OCR (extra edge or inserted characters)."""
+
+    def validate(candidate: str) -> bool:
+        return (
+            format_regex.fullmatch(candidate) is not None
+            and format_to_pattern(candidate, plate_format, prefix_values) is not None
+        )
+
+    if validate(compact):
+        return compact
+
+    boundaries = segment_starts if segment_starts is not None else pattern_segment_starts(plate_format)
+    length = len(compact)
+    if length < expected_len or length > expected_len + max_extra_chars:
+        return None
+
+    for start in range(length - expected_len + 1):
+        candidate = compact[start : start + expected_len]
+        if validate(candidate):
+            return candidate
+
+    best: tuple[tuple[int, ...], str] | None = None
+    best_rank: tuple[int, int, int, int] | None = None
+
+    for indices in combinations(range(length), expected_len):
+        candidate = "".join(compact[index] for index in indices)
+        if not validate(candidate):
+            continue
+
+        skipped = [index for index in range(length) if index not in indices]
+        duplicate_skips = sum(
+            1
+            for index in skipped
+            if (index > 0 and compact[index - 1] == compact[index])
+            or (index + 1 < length and compact[index + 1] == compact[index])
+        )
+        boundary_skips = sum(1 for index in skipped if index in boundaries)
+
+        if indices[-1] - indices[0] + 1 == expected_len:
+            rank = (1, -boundary_skips, -duplicate_skips, min(skipped))
+        else:
+            rank = (2, -boundary_skips, -duplicate_skips, min(skipped))
+
+        if best_rank is None or rank < best_rank:
+            best_rank = rank
+            best = (indices, candidate)
+
+    return best[1] if best is not None else None
+
+
 class PlateOCRModule(Module):
     """Reads license plate text from a cropped plate image using OCR on black characters."""
 
@@ -136,6 +226,8 @@ class PlateOCRModule(Module):
         )
         compact_pattern = self.plate_format.replace(" ", "")
         self._format_regex = pattern_to_regex(compact_pattern, self.prefix_values)
+        self._expected_compact_length = pattern_compact_length(self.plate_format)
+        self._segment_starts = pattern_segment_starts(self.plate_format)
         self._last_log_message: str | None = None
 
     def setup(self) -> None:
@@ -191,14 +283,22 @@ class PlateOCRModule(Module):
             self._log(f"raw {raw_text!r} -> no alphanumerics")
             return None
 
-        if not self._format_regex.fullmatch(compact):
+        matched = extract_plate_compact(
+            compact,
+            expected_len=self._expected_compact_length,
+            format_regex=self._format_regex,
+            plate_format=self.plate_format,
+            prefix_values=self.prefix_values,
+            segment_starts=self._segment_starts,
+        )
+        if matched is None:
             self._log(
                 f"raw {raw_text!r} -> compact {compact!r} "
                 f"does not match {self.plate_format}"
             )
             return None
 
-        formatted = format_to_pattern(compact, self.plate_format, self.prefix_values)
+        formatted = format_to_pattern(matched, self.plate_format, self.prefix_values)
         if formatted is None:
             self._log(
                 f"raw {raw_text!r} -> compact {compact!r} "
@@ -206,7 +306,10 @@ class PlateOCRModule(Module):
             )
             return None
 
-        self._log(f"raw {raw_text!r} -> {formatted}")
+        if matched == compact:
+            self._log(f"raw {raw_text!r} -> {formatted}")
+        else:
+            self._log(f"raw {raw_text!r} -> {formatted} (extracted from {compact!r})")
         return formatted
 
     def _log(self, message: str) -> None:
